@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="battery_height">14.5dp</dimen>
+    <dimen name="battery_width">9.5dp</dimen>
+    <dimen name="battery_real">20dp</dimen>
+    <dimen name="battery_test">40dp</dimen>
+</resources>
