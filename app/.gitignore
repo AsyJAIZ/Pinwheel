@@ -1,1 +1,4 @@
 /build
+/src/androidTest/java/com/asyjaiz/pinwheeltester/ExampleInstrumentedTest.java
+/src/test/java/com/asyjaiz/pinwheeltester/ExampleUnitTest.java
+/libs/android10.jar

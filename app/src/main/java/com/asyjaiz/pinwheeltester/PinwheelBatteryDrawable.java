@@ -27,19 +27,19 @@ import android.view.animation.DecelerateInterpolator;
 import android.view.animation.LinearInterpolator;
 import android.view.animation.PathInterpolator;
 
-import java.util.Arrays;
-
 public class PinwheelBatteryDrawable extends Drawable {
     private static final String TAG = "Pinwheel";
     private Context context;
-    protected boolean animation = true;
-    private final boolean dualTone = true;
+    protected boolean animation = false;
+    boolean dualTone = true;
     private final int segmentCount = 8;
     private final Paint dualToneBackground;
     public Paint errorPaint;
     private final Paint fillPaint;
     private final Paint fillColorStrokePaint;
     private final Paint fillColorStrokeProtection;
+    private final Paint fillStroke;
+
     protected int[] colors;
     private int fillColor = Color.WHITE;
     private int levelColor;
@@ -66,10 +66,10 @@ public class PinwheelBatteryDrawable extends Drawable {
 
 
     private final int size = 20;
-    private final float segmentStart = 252.25f; // 162.25 if top is 0, -17.75f if -180 to 180, 252.25 if start is 270
-    private final float segmentOffset = 45.25f; //they are a bit asymmetrical, i know this. offset to next segment
-    private final float segmentAngleSize = 33.25f;
-    private final float innerArea = 0.21f;
+    private float segmentStart = 252.25f; // 162.25 if top is 0, -17.75f if -180 to 180, 252.25 if start is 270
+    private float segmentOffset = 45.25f; //they are a bit asymmetrical, i know this. offset to next segment
+    private float segmentAngleSize = 33.25f;
+    private float innerArea = 0.21f;
     private float rotation = 0f;
 
     private int microWatt = 1000000; // temp
@@ -96,11 +96,8 @@ public class PinwheelBatteryDrawable extends Drawable {
         return intrinsicWidth;
     }
 
-    public PinwheelBatteryDrawable(Context context, int frameColor, Resources res) {
-        this.context = context;
-        density = context.getResources().getDisplayMetrics().density;
-        intrinsicWidth = (int) (size * density);
-        intrinsicHeight = (int) (size * density);
+    public PinwheelBatteryDrawable(Context c, int f, Resources res) {
+        this(c, f);
 
         TypedArray color_levels = res.obtainTypedArray(R.array.batterymeter_color_levels);
         TypedArray color_values = res.obtainTypedArray(R.array.batterymeter_color_values);
@@ -116,16 +113,34 @@ public class PinwheelBatteryDrawable extends Drawable {
         color_levels.recycle();
         color_values.recycle();
 
+        errorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        errorPaint.setColor(Utils.getColorStateListDefaultColor(context, R.color.batterymeter_saver_color));
+        errorPaint.setDither(true);
+        errorPaint.setBlendMode(BlendMode.SRC);
+        animation = true;
+        dualTone = false;
+        segmentStart = dualTone ? 252.25f : 257.5f; // 162.25 if top is 0, -17.75f if -180 to 180, 252.25 if start is 270
+        segmentOffset = dualTone ? 45.25f : 42.5f; //they are a bit asymmetrical, i know this. offset to next segment
+        segmentAngleSize = dualTone ? 33.25f : 25f; // dualTone is untested y'know
+        innerArea = dualTone ? 0.21f : 0.26f;
+    }
+
+    public PinwheelBatteryDrawable(Context context, int frameColor) {
+        this.context = context;
+        density = context.getResources().getDisplayMetrics().density;
+        intrinsicWidth = (int) (size * density);
+        intrinsicHeight = (int) (size * density);
+
+        segmentStart = dualTone ? 252.25f : 257.5f; // 162.25 if top is 0, -17.75f if -180 to 180, 252.25 if start is 270
+        segmentOffset = dualTone ? 45.25f : 42.5f; //they are a bit asymmetrical, i know this. offset to next segment
+        segmentAngleSize = dualTone ? 33.25f : 25f; // dualTone is untested y'know
+        innerArea = dualTone ? 0.21f : 0.26f;
+
         dualToneBackground = new Paint(Paint.ANTI_ALIAS_FLAG);
         dualToneBackground.setColor(frameColor);
         dualToneBackground.setAlpha(85);
         dualToneBackground.setDither(true);
         dualToneBackground.setStyle(Paint.Style.FILL);
-
-        errorPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-        errorPaint.setColor(Utils.getColorStateListDefaultColor(context, R.color.batterymeter_saver_color));
-        errorPaint.setDither(true);
-        errorPaint.setBlendMode(BlendMode.SRC);
 
         fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         fillPaint.setColor(frameColor);
@@ -150,6 +165,16 @@ public class PinwheelBatteryDrawable extends Drawable {
         fillColorStrokeProtection.setStrokeMiter(5f);
         fillColorStrokeProtection.setStrokeJoin(Paint.Join.ROUND);
 
+        fillStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+        fillStroke.setColor(frameColor);
+        fillStroke.setAlpha(255);
+        fillStroke.setDither(true);
+        fillStroke.setStrokeWidth(1f);
+        fillStroke.setStyle(Paint.Style.STROKE);
+        fillStroke.setBlendMode(BlendMode.SRC);
+        fillStroke.setStrokeMiter(1f);
+        fillStroke.setStrokeJoin(Paint.Join.ROUND);
+
         fillAnim.setInterpolator(new PathInterpolator(0.76f, 0f, 0.24f, 1f));
         fillAnim.addUpdateListener(animation -> {
             batteryLevelAnim = Math.round((float) animation.getAnimatedValue());
@@ -171,20 +196,19 @@ public class PinwheelBatteryDrawable extends Drawable {
                         fillAnim.setDuration(15L * batteryLevelAnim);
                         animation.start();
                     }
-                } else if (charging && !changing || !charging && changing) {
+                } else if (charging && !fillInside || !charging && fillInside) {
                     fillAnim.setFloatValues(0, batteryLevel);
                     fillAnim.setDuration(15L * batteryLevel); // Длительность анимации в миллисекундах * watt
                     if (charging) {
-                        changing = true;
+                        fillInside = true;
                         chargeSpeed = (long) (duration10Watt / wattMultiplier);
                         rotationAnim.setInterpolator(new AccelerateInterpolator());
                         rotationAnim.setDuration(chargeSpeed * 2);
                         rotationAnim.setRepeatCount(1);
-                        Log.d(TAG, "onAnimationEnd: Starting");
                         rotationAnim.start();
                         animation.start();
                     } else {
-                        changing = false;
+                        fillInside = false;
                         animation.start();
                     }
                 }
@@ -225,7 +249,6 @@ public class PinwheelBatteryDrawable extends Drawable {
         });
 
         loadSegments();
-        // loadBounds(segment);
     }
 
     private long chargeSpeed;
@@ -240,12 +263,13 @@ public class PinwheelBatteryDrawable extends Drawable {
             microWatt = microWattage;
             wattMultiplier = microWattage / 10000000f;
             chargeSpeed = (long) (duration10Watt / wattMultiplier);
-            rotationAnim.setDuration(chargeSpeed);
+            if (rotatingState == STABLE)
+                rotationAnim.setDuration(chargeSpeed);
         }
     }
 
     private Boolean charging = false;
-    private boolean changing = false;
+    private boolean fillInside = false;
     public void setCharging(Boolean charging) {
         this.charging = charging;
         if (animation) {
@@ -254,7 +278,7 @@ public class PinwheelBatteryDrawable extends Drawable {
             else
                 mainHandler.post(this::animateCharging);
         } else {
-            changing = charging;
+            fillInside = charging;
             batteryLevelAnim = batteryLevel;
         }
         postInvalidate();
@@ -287,17 +311,15 @@ public class PinwheelBatteryDrawable extends Drawable {
     }
 
     void setColors(int fgColor, int bgColor, int singleToneColor) { // todo: needs upd
-        int fillColor = singleToneColor; // dualTone ? fgColor : singleToneColor;
-        Log.d(TAG, "setColors: color is " + fillColor);
+        fillColor = dualTone ? fgColor : singleToneColor;
 
-        this.fillColor = fillColor;
         fillPaint.setColor(fillColor);
         fillColorStrokePaint.setColor(fillColor);
+        fillStroke.setColor(fillColor);
         dualToneBackground.setColor(bgColor);
 
         levelColor = batteryColorForLevel(batteryLevel);
-
-        postInvalidate();
+        invalidateSelf();
     }
 
     private int getColorForLevel(int percent) {
@@ -327,28 +349,28 @@ public class PinwheelBatteryDrawable extends Drawable {
 
     private void loadSegments() {
         segment[0] = new Path(PathParser.createPathFromPathData(
-                "M10,7.9C8.4,6.3,7.5,2,8.4,0c0.9,1.3,2.2,2.3,3.6,3C10.5,4.2,9.9,5.8,10,7.9z" // 3.957x7.9
+                dualTone ? "M10,7.9C8.4,6.3,7.5,2,8.4,0c0.9,1.3,2.2,2.3,3.6,3C10.5,4.2,9.9,5.8,10,7.9z" : "M 10.005431,6.9017499 C 8.8097847,5.7061044 8.1372341,2.492807 8.8097847,0.99825005 9.4823354,1.969712 10.453798,2.7169905 11.499988,3.2400855 10.379069,4.1368197 9.9307025,5.3324652 10.005431,6.9017499 Z" // 3.957x7.9 dualtone
         ));
         segment[1] = new Path(PathParser.createPathFromPathData(
-                "M11.5,8.5c-0.1-2.3,2.4-5.9,4.4-6.7c-0.2,1.6-0.1,3.2,0.4,4.6C14.4,6.3,12.9,7,11.5,8.5z"
+                dualTone ? "M11.5,8.5c-0.1-2.3,2.4-5.9,4.4-6.7c-0.2,1.6-0.1,3.2,0.4,4.6C14.4,6.3,12.9,7,11.5,8.5z" : "M 11.999802,7.8025715 C 11.92062,5.9814031 13.900151,3.1308784 15.483775,2.4974285 15.325412,3.7643283 15.404594,5.0312283 15.8005,6.1397657 14.296058,6.0605839 13.108338,6.6148532 11.999802,7.8025715 Z"
         ));
         segment[2] = new Path(PathParser.createPathFromPathData(
-                "M12.1,10C13.7,8.4,18,7.5,20,8.4c-1.3,0.9-2.3,2.2-3,3.6C15.8,10.5,14.2,9.9,12.1,10z"
+                dualTone ? "M12.1,10C13.7,8.4,18,7.5,20,8.4c-1.3,0.9-2.3,2.2-3,3.6C15.8,10.5,14.2,9.9,12.1,10z" : "M 12.6,10.002232 C 13.997468,8.6047639 17.753165,7.8186879 19.5,8.6047639 18.364557,9.3908398 17.491139,10.526283 16.879747,11.749068 15.831646,10.438941 14.434177,9.9148905 12.6,10.002232 Z"
         ));
         segment[3] = new Path(PathParser.createPathFromPathData(
-                "M11.5,11.5c2.3-0.1,5.9,2.4,6.7,4.4c-1.6-0.2-3.2-0.1-4.6,0.4C13.7,14.4,13,12.9,11.5,11.5z"
+                dualTone ? "M11.5,11.5c2.3-0.1,5.9,2.4,6.7,4.4c-1.6-0.2-3.2-0.1-4.6,0.4C13.7,14.4,13,12.9,11.5,11.5z" : "m 12,11.858445 c 1.956716,-0.08507 5.019403,2.041791 5.7,3.743284 -1.361194,-0.17015 -2.722388,-0.08507 -3.913433,0.340298 C 13.871642,14.325609 13.276119,13.04949 12,11.858445 Z"
         ));
         segment[4] = new Path(PathParser.createPathFromPathData(
-                "M10,12.1c1.6,1.6,2.5,5.9,1.6,7.9c-0.9-1.3-2.2-2.3-3.6-3C9.5,15.8,10.1,14.2,10,12.1z"
+                dualTone ? "M10,12.1c1.6,1.6,2.5,5.9,1.6,7.9c-0.9-1.3-2.2-2.3-3.6-3C9.5,15.8,10.1,14.2,10,12.1z" : "m 9.9945696,13.09825 c 1.1956454,1.195646 1.8681964,4.408943 1.1956454,5.9035 -0.67255,-0.971462 -1.6440125,-1.718741 -2.6902026,-2.241836 1.1209179,-0.896732 1.5692846,-2.092378 1.4945572,-3.661664 z"
         ));
         segment[5] = new Path(PathParser.createPathFromPathData(
-                "M8.5,11.5c0.1,2.3-2.4,5.9-4.4,6.7c0.2-1.6,0.1-3.2-0.4-4.6C5.6,13.7,7.1,13,8.5,11.5z"
+                dualTone ? "M8.5,11.5c0.1,2.3-2.4,5.9-4.4,6.7c0.2-1.6,0.1-3.2-0.4-4.6C5.6,13.7,7.1,13,8.5,11.5z" : "m 8.0006517,12.19743 c 0.079181,1.821168 -1.9003491,4.67169 -3.4839733,5.30514 0.1583624,-1.266899 0.079181,-2.533799 -0.3167249,-3.642335 1.504443,0.07918 2.6921612,-0.475087 3.8006982,-1.662805 z"
         ));
         segment[6] = new Path(PathParser.createPathFromPathData(
-                "M7.9,10C6.3,11.6,2,12.5,0,11.6C1.3,10.7,2.3,9.4,3,8C4.2,9.5,5.8,10.1,7.9,10z"
+                dualTone ? "M7.9,10C6.3,11.6,2,12.5,0,11.6C1.3,10.7,2.3,9.4,3,8C4.2,9.5,5.8,10.1,7.9,10z" : "M 7.4,9.9977675 C 6.0025316,11.395236 2.2468354,12.181312 0.5,11.395236 1.635443,10.60916 2.5088608,9.4737169 3.1202532,8.2509321 4.1683544,9.5610587 5.5658228,10.085109 7.4,9.9977675 Z"
         ));
         segment[7] = new Path(PathParser.createPathFromPathData(
-                "M8.5,8.5C6.2,8.6,2.6,6.1,1.8,4.1C3.4,4.3,5,4.2,6.4,3.7C6.3,5.6,7,7.1,8.5,8.5z"
+                dualTone ? "M8.5,8.5C6.2,8.6,2.6,6.1,1.8,4.1C3.4,4.3,5,4.2,6.4,3.7C6.3,5.6,7,7.1,8.5,8.5z" : "M 8,8.1415545 C 6.0432836,8.2266291 2.980597,6.0997634 2.3,4.3982709 3.661194,4.5684202 5.0223881,4.4833455 6.2134328,4.0579724 6.1283582,5.6743903 6.7238806,6.9505097 8,8.1415545 Z"
         ));
         for (int i = 0; i < segmentCount; i++) {
             scaledSegment[i] = new Path();
@@ -378,13 +400,15 @@ public class PinwheelBatteryDrawable extends Drawable {
         if (rotationAnim.isRunning())
             canvas.rotate(rotation, bounds.centerX(), bounds.centerY());
         for (int i = 0; i < segmentCount; i++) {
-            if (batteryLevelAnim >= (i + 1) * segmentLevel && !changing) {
+            if (!dualTone)
+                canvas.drawPath(scaledSegment[i], fillStroke);
+            if (batteryLevelAnim >= (i + 1) * segmentLevel && !fillInside) {
                 canvas.drawPath(scaledSegment[i], currentPaint);
             } else {
                 if (dualTone)
                     canvas.drawPath(scaledSegment[i], dualToneBackground); // todo logics impl
 
-                if (true) {//batteryLevelAnim > i * segmentLevel || changing) {
+                if (batteryLevelAnim > i * segmentLevel || fillInside) {
                     canvas.save();
 
                     float localProgress = (batteryLevelAnim - i * segmentLevel) / segmentLevel;
@@ -392,12 +416,12 @@ public class PinwheelBatteryDrawable extends Drawable {
                     float startAngle = segmentStart + (segmentOffset * i);
                     float sweepAngle = localProgress * (segmentAngleSize);
 
-                    if (changing) {
+                    if (fillInside) {
                         float centerX = bounds.centerX();
                         float centerY = bounds.centerY();
                         float maxRadius = bounds.width() / 2f;
                         float innerRadius = (innerArea + 0.20f) * maxRadius; // 0.20f is the space that the bolt takes up
-                        float outerRadius = innerRadius + (maxRadius - innerRadius) * ((float) batteryLevelAnim / maxLevel);
+                        float outerRadius = innerRadius + (maxRadius - innerRadius - (dualTone ? 0f : fillStroke.getStrokeWidth())) * ((float) batteryLevelAnim / maxLevel);
 
                         Path innerClipPath = new Path();
                         innerClipPath.addCircle(centerX, centerY, innerRadius, Path.Direction.CW);
@@ -419,7 +443,7 @@ public class PinwheelBatteryDrawable extends Drawable {
         }
         canvas.restore();
 
-        if (changing) {
+        if (charging) {
             if (!invertFillIcon)
                 canvas.drawPath(scaledBolt, fillPaint);
             canvas.clipOutPath(scaledBolt);
@@ -427,6 +451,9 @@ public class PinwheelBatteryDrawable extends Drawable {
         } else if (powerSaveEnabled) {
             fillPaint.setColor(fillColor);
             canvas.drawPath(scaledPlus, fillPaint);
+            canvas.clipOutPath(scaledPlus);
+            canvas.drawPath(scaledPlus, fillColorStrokeProtection);
+
         }
         canvas.restore();
     }
@@ -459,8 +486,7 @@ public class PinwheelBatteryDrawable extends Drawable {
 
         fillColorStrokePaint.setStrokeWidth(scaledStrokeWidth);
         fillColorStrokeProtection.setStrokeWidth(scaledStrokeWidth);
-
-        // loadBounds(scaledSegment);
+        fillStroke.setStrokeWidth((float) bounds.right / size * 1.5f); // 1f
     }
 
     public void setBatteryLevel(int progress) { // todo upd
@@ -469,7 +495,7 @@ public class PinwheelBatteryDrawable extends Drawable {
         batteryLevelAnim = progress;
         fillAnim.setFloatValues(0, progress);
         levelColor = batteryColorForLevel(progress);
-        postInvalidate();
+        invalidateSelf();
     }
 
     @Override
@@ -482,6 +508,7 @@ public class PinwheelBatteryDrawable extends Drawable {
         dualToneBackground.setColorFilter(colorFilter);
         fillColorStrokePaint.setColorFilter(colorFilter);
         fillPaint.setColorFilter(colorFilter);
+        fillStroke.setColorFilter(colorFilter);
     }
 
     @Override
