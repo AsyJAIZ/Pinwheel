@@ -40,6 +40,15 @@ public class PinwheelBatteryDrawable extends Drawable {
     private final Paint fillColorStrokeProtection;
     private final Paint fillStroke;
 
+    private Drawable host;
+    // Drawable хранит callback через WeakReference, поэтому нужно поле
+    private final Drawable.Callback hostCb = new Drawable.Callback() {
+        public void invalidateDrawable(Drawable who) { if (host != null) host.invalidateSelf(); }
+        public void scheduleDrawable(Drawable who, Runnable r, long t) { if (host != null) host.scheduleSelf(r, t); }
+        public void unscheduleDrawable(Drawable who, Runnable r) { if (host != null) host.unscheduleSelf(r); }
+    };
+    public void setHost(Drawable h) { host = h; setCallback(hostCb); }
+
     protected int[] colors;
     private int fillColor = Color.WHITE;
     private int levelColor;
@@ -253,24 +262,29 @@ public class PinwheelBatteryDrawable extends Drawable {
 
     private long chargeSpeed;
     public void setWattage(float wattage) {
-        wattMultiplier = wattage / 10;
-        chargeSpeed = (long) (duration10Watt / wattMultiplier);
-        rotationAnim.setDuration(chargeSpeed);
+        mainHandler.post(() -> {
+            wattMultiplier = wattage / 10;
+            chargeSpeed = (long) (duration10Watt / wattMultiplier);
+            rotationAnim.setDuration(chargeSpeed);
+            });
     }
 
     public void setMicroWattage(int microWattage) {
-        if (microWattage >= 0 && microWattage != microWatt) {
-            microWatt = microWattage;
-            wattMultiplier = microWattage / 10000000f;
-            chargeSpeed = (long) (duration10Watt / wattMultiplier);
-            if (rotatingState == STABLE)
-                rotationAnim.setDuration(chargeSpeed);
-        }
+        mainHandler.post(() -> {
+            if (microWattage > 0 && microWattage != microWatt) {
+                microWatt = microWattage;
+                wattMultiplier = microWattage / 10000000f;
+                chargeSpeed = (long) (duration10Watt / wattMultiplier);
+                if (rotatingState == STABLE)
+                    rotationAnim.setDuration(chargeSpeed);
+            }
+        });
     }
 
     private Boolean charging = false;
     private boolean fillInside = false;
     public void setCharging(Boolean charging) {
+        if (this.charging == (boolean) charging) { postInvalidate(); return; }
         this.charging = charging;
         if (animation) {
             if (Looper.myLooper() == Looper.getMainLooper())
@@ -306,8 +320,9 @@ public class PinwheelBatteryDrawable extends Drawable {
     }
 
     private void postInvalidate() {
-        unscheduleSelf(this::invalidateSelf);
-        scheduleSelf(this::invalidateSelf, 0);
+        // unscheduleSelf(this::invalidateSelf);
+        // scheduleSelf(this::invalidateSelf, 0);
+        invalidateSelf();
     }
 
     void setColors(int fgColor, int bgColor, int singleToneColor) { // todo: needs upd
