@@ -48,7 +48,7 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
     private String sysUi = "com.android.systemui";
     private boolean failing = false;
     private final Map<Object, PinwheelBatteryDrawable> batteryInstances = Collections.synchronizedMap(new WeakHashMap<>());
-
+    private Class<?> powerSaveHookedClass;
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam param) throws Throwable {
@@ -168,32 +168,38 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                             super.afterHookedMethod(param);
                         }
                     }));
-            hooks.add(findAndHookMethod(sysUi + ".battery.BatteryMeterView", param.classLoader,
+            /*hooks.add(findAndHookMethod(sysUi + ".battery.BatteryMeterView", param.classLoader,
                 "onPowerSaveChanged", boolean.class, new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam p) {
                     PinwheelBatteryDrawable d = forView(p.thisObject);
                     if (d != null) d.setPowerSaveEnabled((boolean) p.args[0]);
                 }
-            }));
-            //Class<?> viewController = findClass(sysUi + ".battery.BatteryMeterViewController", param.classLoader);
-            /*hooks.add(hookMethod(viewController.getConstructors()[0], new XC_MethodHook() {
+            }));*/
+            Class<?> viewController = findClass(sysUi + ".battery.BatteryMeterViewController", param.classLoader);
+            hooks.add(hookMethod(viewController.getConstructors()[0], new XC_MethodHook() {
                 @Override
                 protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                     super.afterHookedMethod(param);
                     Object stateCallback = getObjectField(param.thisObject, "mBatteryStateChangeCallback");
                     DrawableWrapper accesBat = (DrawableWrapper) getObjectField(getObjectField(param.thisObject, "mView"), "mDrawable");
                     Method powerSaving = stateCallback.getClass().getMethod("onPowerSaveChanged", boolean.class);
-                    batteryDrawable[0] = batteryInstances.get(accesBat.getDrawable());
+                    PinwheelBatteryDrawable d = batteryInstances.get(accesBat.getDrawable());
+                    if (d == null) return;
+                    synchronized (PinwheelPlace.this) {         // метод хукаем один раз на класс
+                        if (powerSaveHookedClass == stateCallback.getClass()) return;
+                        powerSaveHookedClass = stateCallback.getClass();
+                    }
                     hooks.add(hookMethod(powerSaving, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            batteryDrawable[0].setPowerSaveEnabled((boolean) param.args[0]);
+                            PinwheelBatteryDrawable t = batteryInstances.get(param.thisObject);
+                            if (t != null) t.setPowerSaveEnabled((boolean) param.args[0]);
                             super.afterHookedMethod(param);
                         }
                     }));
                 }
-            }));*/
+            }));
             hooks.add(findAndHookMethod(sysUi + ".battery.BatteryMeterView", param.classLoader,
                     "updateColors", int.class, int.class, int.class, new XC_MethodHook() {
                 @Override
