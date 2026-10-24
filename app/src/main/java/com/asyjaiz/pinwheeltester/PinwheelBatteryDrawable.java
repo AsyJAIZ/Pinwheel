@@ -30,7 +30,7 @@ import android.view.animation.PathInterpolator;
 public class PinwheelBatteryDrawable extends Drawable {
     private static final String TAG = "Pinwheel";
     private Context context;
-    protected boolean animation = false;
+    protected boolean animation = true; // global flag for testing
     boolean dualTone = true;
     private final int segmentCount = 8;
     private final Paint dualToneBackground;
@@ -205,19 +205,16 @@ public class PinwheelBatteryDrawable extends Drawable {
                         fillAnim.setDuration(15L * batteryLevelAnim);
                         animation.start();
                     }
-                } else if (charging && !fillInside || !charging && fillInside) {
+                } else if (charging && !fillFromInside || !charging && fillFromInside) {
                     fillAnim.setFloatValues(0, batteryLevel);
-                    fillAnim.setDuration(15L * batteryLevel); // Длительность анимации в миллисекундах * watt
+                    fillAnim.setDuration(15L * batteryLevel); // Длительность анимации в миллисекундах * percent
                     if (charging) {
-                        fillInside = true;
+                        fillFromInside = true;
                         chargeSpeed = (long) (duration10Watt / wattMultiplier);
                         rotationAnim.setInterpolator(new AccelerateInterpolator());
                         rotationAnim.setDuration(chargeSpeed * 2);
                         rotationAnim.setRepeatCount(1);
                         rotationAnim.start();
-                        animation.start();
-                    } else {
-                        fillInside = false;
                         animation.start();
                     }
                 }
@@ -255,6 +252,15 @@ public class PinwheelBatteryDrawable extends Drawable {
                     rotationAnim.start();
                 }
             }
+
+            @Override
+            public void onAnimationEnd(Animator animation) {
+                super.onAnimationEnd(animation);
+                if (rotatingState == EXIT && !charging && rotationAnim.getRepeatCount() == 0) {
+                    fillFromInside = false;
+                    fillAnim.start();
+                }
+            }
         });
 
         loadSegments();
@@ -282,17 +288,14 @@ public class PinwheelBatteryDrawable extends Drawable {
     }
 
     private Boolean charging = false;
-    private boolean fillInside = false;
+    private boolean fillFromInside = false;
     public void setCharging(Boolean charging) {
         if (this.charging == (boolean) charging) { postInvalidate(); return; }
         this.charging = charging;
         if (animation) {
-            if (Looper.myLooper() == Looper.getMainLooper())
-                animateCharging();
-            else
-                mainHandler.post(this::animateCharging);
+            mainHandler.post(this::animateCharging);
         } else {
-            fillInside = charging;
+            fillFromInside = charging;
             batteryLevelAnim = batteryLevel;
         }
         postInvalidate();
@@ -303,7 +306,7 @@ public class PinwheelBatteryDrawable extends Drawable {
             fillAnim.cancel();
         else {
             fillAnim.setFloatValues(0, batteryLevel);
-            fillAnim.setDuration(15L * batteryLevel);
+            fillAnim.setDuration(7L * batteryLevel);
             fillAnim.reverse();
         }
         if (rotatingState == STABLE || rotatingState == ENTER)
@@ -417,13 +420,13 @@ public class PinwheelBatteryDrawable extends Drawable {
         for (int i = 0; i < segmentCount; i++) {
             if (!dualTone)
                 canvas.drawPath(scaledSegment[i], fillStroke);
-            if (batteryLevelAnim >= (i + 1) * segmentLevel && !fillInside) {
+            if (batteryLevelAnim >= (i + 1) * segmentLevel && !fillFromInside) {
                 canvas.drawPath(scaledSegment[i], currentPaint);
             } else {
                 if (dualTone)
                     canvas.drawPath(scaledSegment[i], dualToneBackground); // todo logics impl
 
-                if (batteryLevelAnim > i * segmentLevel || fillInside) {
+                if (batteryLevelAnim > i * segmentLevel || fillFromInside) {
                     canvas.save();
 
                     float localProgress = (batteryLevelAnim - i * segmentLevel) / segmentLevel;
@@ -431,7 +434,7 @@ public class PinwheelBatteryDrawable extends Drawable {
                     float startAngle = segmentStart + (segmentOffset * i);
                     float sweepAngle = localProgress * (segmentAngleSize);
 
-                    if (fillInside) {
+                    if (fillFromInside) {
                         float centerX = bounds.centerX();
                         float centerY = bounds.centerY();
                         float maxRadius = bounds.width() / 2f;

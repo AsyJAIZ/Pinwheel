@@ -24,6 +24,7 @@ import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.DrawableWrapper;
 import android.util.Log;
+import android.util.TypedValue;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Method;
@@ -55,7 +56,6 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
         if (failing || !Objects.equals(param.packageName, sysUi)) return;
         log("Pinwheel went through the code hook!");
 
-        final PinwheelBatteryDrawable[] batteryDrawable = new PinwheelBatteryDrawable[1];
         List<XC_MethodHook.Unhook> hooks = new ArrayList<>();
 
         Class<?> batteryClass = findClass("com.android.settingslib.graph.ThemedBatteryDrawable", param.classLoader);
@@ -86,7 +86,6 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                     d.colors = (int[]) getObjectField(param.thisObject, "colorLevels");
                     d.errorPaint = (Paint) getObjectField(param.thisObject, "errorPaint");
                     d.setHost((Drawable) param.thisObject);
-                    d.animation = true;
                     //batteryDrawable[0].dualTone = (boolean) getObjectField(param.thisObject, "dualTone");
                 }
             }));
@@ -148,23 +147,9 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                             boolean charging = (boolean) param.args[1];
 
                             PinwheelBatteryDrawable d = forView(param.thisObject);
-                            if (d == null) return; // XposedBridge.invokeOriginalMethod(p.method, p.thisObject, p.args);
+                            if (d == null) return;
                             d.setBatteryLevel(batteryLevel);
                             d.setCharging(charging);
-                            /*if (batteryDrawable[0].animation) {
-                                if (batteryDrawable[0].fillAnim.isRunning())
-                                batteryDrawable[0].fillAnim.cancel();
-                                else {
-                                    batteryDrawable[0].fillAnim.setFloatValues(0, batteryLevel);
-                                    batteryDrawable[0].fillAnim.setDuration(15L * batteryLevel);
-                                    batteryDrawable[0].fillAnim.reverse();
-                                }
-                                if (batteryDrawable[0].rotatingState == STABLE || batteryDrawable[0].rotatingState == ENTER)
-                                    batteryDrawable[0].rotatingState = EXIT;
-                                else if (charging) {
-                                    batteryDrawable[0].rotatingState = ENTER;
-                                }
-                            }*/
                             super.afterHookedMethod(param);
                         }
                     }));
@@ -179,21 +164,22 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
             Class<?> viewController = findClass(sysUi + ".battery.BatteryMeterViewController", param.classLoader);
             hooks.add(hookMethod(viewController.getConstructors()[0], new XC_MethodHook() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                    super.afterHookedMethod(param);
-                    Object stateCallback = getObjectField(param.thisObject, "mBatteryStateChangeCallback");
-                    DrawableWrapper accesBat = (DrawableWrapper) getObjectField(getObjectField(param.thisObject, "mView"), "mDrawable");
-                    Method powerSaving = stateCallback.getClass().getMethod("onPowerSaveChanged", boolean.class);
-                    PinwheelBatteryDrawable d = batteryInstances.get(accesBat.getDrawable());
+                protected void afterHookedMethod(MethodHookParam constructorParam) throws Throwable {
+                    super.afterHookedMethod(constructorParam);
+                    PinwheelBatteryDrawable d = forView(getObjectField(constructorParam.thisObject, "mView"));
                     if (d == null) return;
+
+                    Object stateCallback = getObjectField(constructorParam.thisObject, "mBatteryStateChangeCallback");
                     synchronized (PinwheelPlace.this) {         // метод хукаем один раз на класс
                         if (powerSaveHookedClass == stateCallback.getClass()) return;
                         powerSaveHookedClass = stateCallback.getClass();
                     }
+
+                    Method powerSaving = powerSaveHookedClass.getMethod("onPowerSaveChanged", boolean.class);
                     hooks.add(hookMethod(powerSaving, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            PinwheelBatteryDrawable t = batteryInstances.get(param.thisObject);
+                            PinwheelBatteryDrawable t = forView(getObjectField(constructorParam.thisObject, "mView"));
                             if (t != null) t.setPowerSaveEnabled((boolean) param.args[0]);
                             super.afterHookedMethod(param);
                         }
@@ -216,9 +202,7 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                             super.afterHookedMethod(param);
                             int wattage = getIntField(param.thisObject, "maxChargingWattage");
                             synchronized (batteryInstances) {
-                                batteryInstances.forEach((o, b) -> {
-                                    b.setMicroWattage(wattage);
-                                });
+                                batteryInstances.forEach((o, b) -> b.setMicroWattage(wattage));
                             }
                         }
                     }));
@@ -242,16 +226,19 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
     public void handleInitPackageResources(XC_InitPackageResources.InitPackageResourcesParam resParam) throws Throwable {
         if (failing || !resParam.packageName.equals(sysUi)) return;
 
-        XModuleResources res = XModuleResources.createInstance("/system_ext/priv-app/SystemUIGoogle/SystemUIGoogle.apk", resParam.res);
+        //XModuleResources res = XModuleResources.createInstance("/system_ext/priv-app/SystemUIGoogle/SystemUIGoogle.apk", resParam.res);
         log("Pinwheel went through the resource hook!");
+        float spSize = 15.0f;
         resParam.res.setReplacement(sysUi, "dimen", "status_bar_battery_icon_width",
-                res.fwd(resParam.res.getIdentifier("status_bar_battery_icon_height", "dimen", sysUi)));
-        try {
+                new XResources.DimensionReplacement(spSize, TypedValue.COMPLEX_UNIT_SP)); // res.fwd(resParam.res.getIdentifier("status_bar_battery_icon_height", "dimen", sysUi))
+        resParam.res.setReplacement(sysUi, "dimen", "status_bar_battery_icon_height",
+                new XResources.DimensionReplacement(spSize, TypedValue.COMPLEX_UNIT_SP));
+        /*try {
             resParam.res.setReplacement(sysUi, "dimen", "status_bar_battery_unified_icon_width",
                     res.fwd(resParam.res.getIdentifier("status_bar_battery_unified_icon_height", "dimen", sysUi)));
         } catch (Throwable e) {
             log("Pinwheel resource replacement failed: " + e.getMessage());
-        }
+        }*/
     }
 }
 
