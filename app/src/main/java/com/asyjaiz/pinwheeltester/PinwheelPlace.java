@@ -5,6 +5,7 @@ import static com.asyjaiz.pinwheeltester.PinwheelBatteryDrawable.EXIT;
 import static com.asyjaiz.pinwheeltester.PinwheelBatteryDrawable.STABLE;
 import static de.robv.android.xposed.XposedBridge.hookMethod;
 import static de.robv.android.xposed.XposedBridge.log;
+import static de.robv.android.xposed.XposedHelpers.callMethod;
 import static de.robv.android.xposed.XposedHelpers.findAndHookConstructor;
 import static de.robv.android.xposed.XposedHelpers.findAndHookMethod;
 import static de.robv.android.xposed.XposedHelpers.findClass;
@@ -27,6 +28,7 @@ import android.util.Log;
 import android.util.TypedValue;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +42,7 @@ import de.robv.android.xposed.IXposedHookInitPackageResources;
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XC_MethodReplacement;
+import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_InitPackageResources;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
@@ -74,8 +77,6 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                 protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
                     super.beforeHookedMethod(param);
                     batteryInstances.put(param.thisObject, new PinwheelBatteryDrawable((Context) param.args[finalOrder ? 1:0], (int) param.args[finalOrder ? 0:1]));
-                    log("Pinwheel new drawable " + System.identityHashCode(param.thisObject)
-                        + "\n" + Log.getStackTraceString(new Throwable()));
                 }
 
                 @Override
@@ -144,12 +145,11 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) throws Throwable {
                             int batteryLevel = (int) param.args[0];
-                            boolean charging = (boolean) param.args[1];
 
                             PinwheelBatteryDrawable d = forView(param.thisObject);
                             if (d == null) return;
                             d.setBatteryLevel(batteryLevel);
-                            d.setCharging(charging);
+                            d.setCharging((boolean) callMethod(param.thisObject, "isCharging"));
                             super.afterHookedMethod(param);
                         }
                     }));
@@ -179,7 +179,7 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                     hooks.add(hookMethod(powerSaving, new XC_MethodHook() {
                         @Override
                         protected void afterHookedMethod(MethodHookParam param) throws Throwable {
-                            PinwheelBatteryDrawable t = forView(getObjectField(constructorParam.thisObject, "mView"));
+                            PinwheelBatteryDrawable t = forView(getObjectField(XposedHelpers.getSurroundingThis(param.thisObject), "mView"));
                             if (t != null) t.setPowerSaveEnabled((boolean) param.args[0]);
                             super.afterHookedMethod(param);
                         }
@@ -207,7 +207,7 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
                         }
                     }));
         } catch (Throwable e) {
-            log("Pinwheel hook failed: " + e.getMessage() + ", " + e.getClass().getName());
+            log("Pinwheeler failed: " + e.getMessage() + ", " + e.getClass().getName());
             log("Pinwheeler unhooks all methods and turns off...");
             for (XC_MethodHook.Unhook hook:
                  hooks) {
@@ -227,7 +227,6 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
         if (failing || !resParam.packageName.equals(sysUi)) return;
 
         //XModuleResources res = XModuleResources.createInstance("/system_ext/priv-app/SystemUIGoogle/SystemUIGoogle.apk", resParam.res);
-        log("Pinwheel went through the resource hook!");
         float spSize = 15.0f;
         resParam.res.setReplacement(sysUi, "dimen", "status_bar_battery_icon_width",
                 new XResources.DimensionReplacement(spSize, TypedValue.COMPLEX_UNIT_SP)); // res.fwd(resParam.res.getIdentifier("status_bar_battery_icon_height", "dimen", sysUi))
