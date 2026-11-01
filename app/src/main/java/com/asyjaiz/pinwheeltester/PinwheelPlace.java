@@ -16,18 +16,26 @@ import static de.robv.android.xposed.XposedHelpers.getObjectField;
 
 import android.content.Context;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.content.res.XModuleResources;
 import android.content.res.XResources;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.DrawableWrapper;
 import android.util.Log;
+import android.text.TextUtils;
 import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.ViewGroup;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import java.lang.reflect.Constructor;
+import java.text.NumberFormat;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -49,6 +57,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPackageResources {
 
     private static final String TAG = "Pinwheeler";
+    // иконка батареи в индикации локскрина и AOD
+    private static final boolean KEYGUARD_INDICATION_ICON = true;
     private String sysUi = "com.android.systemui";
     private boolean failing = false;
     private final Map<Object, PinwheelBatteryDrawable> batteryInstances = Collections.synchronizedMap(new WeakHashMap<>());
@@ -215,6 +225,139 @@ public class PinwheelPlace implements IXposedHookLoadPackage, IXposedHookInitPac
             }
             failing = true;
         }
+        if (!failing && KEYGUARD_INDICATION_ICON) hookKeyguardIndication(param.classLoader);
+    }
+
+    // Иконка батареи рядом с "Charging rapidly" на локскрине и AOD.
+    // KeyguardIndication уже умеет mIcon, просто для батареи туда передают null.
+    private void hookKeyguardIndication(ClassLoader classLoader) {
+        List<XC_MethodHook.Unhook> hooks = new ArrayList<>();
+        try {
+            Class<?> controllerClass = findClass(sysUi + ".statusbar.KeyguardIndicationController", classLoader);
+            Class<?> googleClass = XposedHelpers.findClassIfExists("com.google.android.systemui.statusbar.KeyguardIndicationControllerGoogle", classLoader);
+
+            // все батарейные индикации собираются внутри updateDeviceEntryIndication на main потоке
+            hooks.add(findAndHookMethod(controllerClass, "updateDeviceEntryIndication", boolean.class, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    indicationController = param.thisObject;
+                    lastPowerIndication = null;
+                    buildingIndication = true;
+                }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    buildingIndication = false;
+                    // отключили зарядку: тормозим кешированную иконку, следующая подключка начнёт с анимации входа
+                    if (lockscreenIcon != null && !getBooleanField(param.thisObject, "mPowerPluggedIn")) {
+                        lockscreenIcon.setCharging(false);
+                        lockscreenIcon = null;
+                    }
+                }
+            }));
+            // switchIndication(null, null) стирает текст, но не трогает compound drawable — иконка зависала.
+            // Подсовываем пустую индикацию, чтобы TextView прошёл обычную ветку и снял иконку.
+            Class<?> indicationClass = findClass(sysUi + ".keyguard.KeyguardIndication", classLoader);
+            Constructor<?> indicationConstructor = indicationClass.getDeclaredConstructors()[0];
+            hooks.addAll(XposedBridge.hookAllMethods(findClass(sysUi + ".statusbar.phone.KeyguardIndicationTextView", classLoader), "switchIndication", new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
+                    if (param.args[1] != null) return;
+                    TextView view = (TextView) param.thisObject;
+                    if (view.getCompoundDrawablesRelative()[0] == null) return;
+                    param.args[1] = indicationConstructor.newInstance(null, view.getTextColors(), null, null, null, null, Boolean.FALSE);
+                }
+            }));
+            hooks.add(hookMethod(XposedHelpers.findMethodExact(googleClass != null ? googleClass : controllerClass, "computePowerIndication"), new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    lastPowerIndication = (CharSequence) param.getResult();
+                }
+            }));
+            hooks.addAll(XposedBridge.hookAllConstructors(indicationClass, new XC_MethodHook() {
+                @Override
+                protected void beforeHookedMethod(MethodHookParam param) {
+                    if (!buildingIndication || param.args[2] != null) return;
+                    PinwheelBatteryDrawable icon = indicationIconFor((CharSequence) param.args[0]);
+                    if (icon != null) param.args[2] = icon;
+                }
+            }));
+            hooks.add(findAndHookMethod(controllerClass, "setIndicationArea", ViewGroup.class, new XC_MethodHook() {
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    int padding = Math.round(4 * ((ViewGroup) param.args[0]).getResources().getDisplayMetrics().density);
+                    TextView top = (TextView) getObjectField(param.thisObject, "mTopIndicationView");
+                    TextView bottom = (TextView) getObjectField(param.thisObject, "mLockScreenIndicationView");
+                    if (bottom != null) bottom.setCompoundDrawablePadding(padding);
+                    if (top == null) return;
+                    top.setCompoundDrawablePadding(padding);
+                    // AOD вью растянута на всю ширину, иначе drawableStart уезжает к левому краю
+                    ViewGroup.LayoutParams lp = top.getLayoutParams();
+                    if (lp instanceof LinearLayout.LayoutParams) {
+                        lp.width = ViewGroup.LayoutParams.WRAP_CONTENT;
+                        ((LinearLayout.LayoutParams) lp).gravity = Gravity.CENTER_HORIZONTAL;
+                        top.setLayoutParams(lp);
+                    }
+                }
+            }));
+        } catch (Throwable e) {
+            log("Pinwheeler keyguard indication failed: " + e.getMessage() + ", " + e.getClass().getName());
+            for (XC_MethodHook.Unhook hook : hooks) hook.unhook();
+        }
+    }
+
+    private Object indicationController;
+    private CharSequence lastPowerIndication;
+    private boolean buildingIndication = false;
+    private PinwheelBatteryDrawable lockscreenIcon;
+
+    private PinwheelBatteryDrawable indicationIconFor(CharSequence message) {
+        Object c = indicationController;
+        if (c == null || TextUtils.isEmpty(message)) return null;
+        int level = getIntField(c, "mBatteryLevel");
+        if (level < 0) return null;
+        boolean dozing = getBooleanField(c, "mDozing");
+        boolean isBattery = TextUtils.equals(message, lastPowerIndication)
+                || (dozing && TextUtils.equals(message, NumberFormat.getPercentInstance().format(level / 100f)));
+        if (!isBattery) return null; // биометрия и прочее идут без иконки
+
+        PinwheelBatteryDrawable icon;
+        if (dozing) {
+            icon = newIndicationIcon(c, false); // на AOD без анимаций, каждый раз новая
+        } else {
+            if (lockscreenIcon == null) lockscreenIcon = newIndicationIcon(c, true);
+            icon = lockscreenIcon;
+        }
+        icon.setMicroWattage(getIntField(c, "mChargingWattage"));
+        icon.setBatteryLevel(level);
+        icon.setCharging(getBooleanField(c, "mPowerPluggedIn"));
+        return icon;
+    }
+
+    private PinwheelBatteryDrawable newIndicationIcon(Object controller, boolean animated) {
+        Context context = (Context) getObjectField(controller, "mContext");
+        TextView view = (TextView) getObjectField(controller, "mTopIndicationView");
+        int size = Math.round((view != null ? view.getTextSize() : 14 * context.getResources().getDisplayMetrics().scaledDensity) * 1.5f);
+        PinwheelBatteryDrawable d = new PinwheelBatteryDrawable(context, Color.WHITE) {
+            @Override
+            public int getIntrinsicWidth() { return size; }
+            @Override
+            public int getIntrinsicHeight() { return size; }
+            @Override
+            public void setTintList(ColorStateList tint) { // TextView красит иконку в цвет текста
+                if (tint == null) return;
+                int color = tint.getDefaultColor();
+                setColors(color, color, color);
+            }
+        };
+        d.animation = animated;
+        PinwheelBatteryDrawable statusBar;
+        synchronized (batteryInstances) {
+            statusBar = batteryInstances.isEmpty() ? null : batteryInstances.values().iterator().next();
+        }
+        d.colors = statusBar != null && statusBar.colors != null ? statusBar.colors : new int[]{100, Color.WHITE};
+        d.errorPaint = statusBar != null && statusBar.errorPaint != null ? statusBar.errorPaint : new Paint(Paint.ANTI_ALIAS_FLAG);
+        return d;
     }
 
     private PinwheelBatteryDrawable forView(Object view) {
